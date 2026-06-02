@@ -1,0 +1,58 @@
+export const LAB_TEST_CATALOG = [
+    {
+        key: 'alt',
+        label: 'Angka Lempeng Total (ALT)',
+        aliases: ['angka lempeng total (alt)', 'alt'],
+        satuan: 'Percontoh',
+        tarif: 75000,
+    },
+    {
+        key: 'coliform',
+        label: 'Coliform',
+        aliases: ['coliform'],
+        satuan: 'Percontoh',
+        tarif: 75000,
+    },
+    {
+        key: 'coliform_produk_kerang',
+        label: 'Coliform Produk Kerang',
+        aliases: ['coliform produk kerang'],
+        satuan: 'Percontoh',
+        tarif: 150000,
+    },
+    {
+        key: 'escherichia_coli',
+        label: 'Escherichia Coli',
+        aliases: ['escherichia coli', 'escherichia coli (e. coli)', 'e. coli'],
+        satuan: 'Percontoh',
+        tarif: 245000,
+    },
+    {
+        key: 'escherichia_coli_produk_kerang',
+        label: 'Escherichia Coli Produk Kerang',
+        aliases: ['escherichia coli produk kerang'],
+        satuan: 'Percontoh',
+        tarif: 300000,
+    },
+    {
+        key: 'salmonella',
+        label: 'Salmonella',
+        aliases: ['salmonella'],
+        satuan: 'Percontoh',
+        tarif: 350000,
+    },
+    {
+        key: 'sensori',
+        label: 'Sensori',
+        aliases: ['sensori'],
+        satuan: 'Percontoh',
+        tarif: 200000,
+    },
+    {
+        key: 'formalin',
+        label: 'Formalin',
+        aliases: ['formalin'],
+        satuan: '1 sampel 3 kali Ulangan',
+        tarif: 198000,
+    },
+] as const;
