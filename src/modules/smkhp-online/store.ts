@@ -6,9 +6,9 @@ import {
     onSnapshot,
     orderBy,
     query,
-    setDoc,
     updateDoc,
     where,
+    writeBatch,
 } from 'firebase/firestore';
 import { db } from '../../shared/configs/firebase';
 
@@ -19,7 +19,8 @@ export type SMKHPOnlineData = {
     details: {
         formattedNo: string;
         isOnline: boolean;
-        kebutuhan: string;
+        kebutuhan: string;   // dipetakan dari details.ajuan || details.kebutuhan
+        noAju: string;       // nomor aju dari details.noAju
         linkmeet: string;
         tanggal: string;
         timemeet: string;
@@ -27,6 +28,7 @@ export type SMKHPOnlineData = {
     };
     nomorHp: string;
     npwp: string;
+    nik: string;
     queueNo: number;
     rating: number;
     status: SMKHPOnlineStatus;
@@ -133,24 +135,34 @@ const useSMKHPOnlineStore = create<SMKHPOnlineState & SMKHPOnlineAction>()(
                             details: {
                                 formattedNo: details.formattedNo || item.id,
                                 isOnline: !!details.isOnline,
-                                kebutuhan: details.kebutuhan || '-',
+                                // Fallback alias: ajuan (nama field di Firestore) -> kebutuhan
+                                kebutuhan: details.ajuan || details.kebutuhan || '-',
+                                noAju: details.noAju || '',
                                 linkmeet: details.linkmeet || '',
                                 tanggal: details.tanggal || '',
                                 timemeet: normalizeTime(details.timemeet),
                                 typeOnline: details.typeOnline || '',
                             },
+                            // Fallback alias: nomerHp (typo lama) -> nomorHp
                             nomorHp: value.nomorHp || value.nomerHp || '-',
                             npwp: value.npwp || '-',
+                            nik: value.nik || value.NIK || '',
                             queueNo: Number(value.queueNo || 0),
                             rating: Number(value.rating || 0),
                             status: normalizeStatus(value.status),
                             subStatus: value.subStatus || '',
                             timestamp: Number(value.timestamp || 0),
                             type: value.type || '',
+                            // Fallback alias: uid -> uuid
                             uuid: value.uuid || value.uid || '',
+                            // Fallback alias: email -> userEmail
                             userEmail: value.userEmail || value.email || '',
+                            // Fallback alias: userNama / username / nama
                             username:
-                                value.username || value.nama || 'Tanpa Nama',
+                                value.userNama ||
+                                value.username ||
+                                value.nama ||
+                                'Tanpa Nama',
                             nama_petugas: value.nama_petugas || '',
                             nip_petugas: value.nip_petugas || '',
                             catatan_petugas:
@@ -248,23 +260,21 @@ const useSMKHPOnlineStore = create<SMKHPOnlineState & SMKHPOnlineAction>()(
 
             try {
                 const matchedUser = await findUserByEmail(item.userEmail);
+                const batch = writeBatch(db);
 
-                await updateDoc(doc(db, 'onlineSMKHP', token), {
-                    status: 'Selesai',
-                    nama_petugas: petugas.nama,
-                    nip_petugas: petugas.nip,
-                    catatan_petugas: catatan?.trim() || '',
-                    updatedAt: Date.now(),
-                });
+                const activeRef = doc(db, 'onlineSMKHP', token);
+                const notesRef = doc(db, 'officer_notes', token);
+                const historyRef = doc(db, 'historySMKHPOnline', token);
 
-                await setDoc(doc(db, 'officer_notes', token), {
+                // 1. Write to officer_notes
+                batch.set(notesRef, {
                     nama_petugas: petugas.nama,
                     nip_petugas: petugas.nip,
                     catatan: catatan?.trim() || '',
                     layanan: 'SMKHP Online',
                     token,
                     nomor_antrian: item.details.formattedNo || token,
-                    nomor_aju: item.npwp || '', // SMKHP online usually uses NPWP or similar
+                    nomor_aju: item.npwp || '',
                     jadwal_meeting: {
                         tanggal: item.details.tanggal || '',
                         jam: item.details.timemeet || '',
@@ -273,12 +283,13 @@ const useSMKHPOnlineStore = create<SMKHPOnlineState & SMKHPOnlineAction>()(
                     timestamp: Date.now(),
                 });
 
-                await setDoc(doc(db, 'historySMKHPOnline', token), {
+                // 2. Write to historySMKHPOnline
+                batch.set(historyRef, {
                     token,
                     formattedNo: item.details.formattedNo || token,
                     email: item.userEmail || '',
                     nama: item.username || '',
-                    nik: '', // From schema provided, nik is not explicit but could be present
+                    nik: matchedUser?.nik || matchedUser?.NIK || item.nik || '',
                     npwp: item.npwp || matchedUser?.npwp || '',
                     nomorHp: item.nomorHp || '',
                     queueNo: item.queueNo || 0,
@@ -294,6 +305,12 @@ const useSMKHPOnlineStore = create<SMKHPOnlineState & SMKHPOnlineAction>()(
                     timestamp: Date.now(),
                     updatedAt: Date.now(),
                 });
+
+                // 3. Delete from active queues (onlineSMKHP)
+                batch.delete(activeRef);
+
+                // Commit transaction
+                await batch.commit();
 
                 return { success: true };
             } catch (error: any) {

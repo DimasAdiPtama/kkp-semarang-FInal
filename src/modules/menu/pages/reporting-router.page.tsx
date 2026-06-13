@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { Button, Table } from '../../../shared/components';
 import RoleGuard from '../../../shared/auth/role-guard';
 import HeaderNavigation from '../../../shared/navigations/header.navigation';
@@ -175,84 +175,107 @@ export default function ReportingRouterPage() {
     const today = React.useMemo(() => getTodayDate(), []);
     const [startDate, setStartDate] = React.useState(today);
     const [endDate, setEndDate] = React.useState(today);
+    const [isLoading, setIsLoading] = React.useState(false);
 
     React.useEffect(() => {
+        let active = true;
         const collectionNames = Object.keys(SERVICE_META);
-        const cache: Record<string, ReportingRecord[]> = {};
 
-        const flush = () => {
-            const merged = collectionNames.flatMap((name) => cache[name] || []);
-            setRecords(merged.sort((a, b) => b.timestamp - a.timestamp));
+        const fetchData = async () => {
+            setIsLoading(true);
+            const start = getTimestampFromDateKey(startDate);
+            // End date includes the entire day (up to 23:59:59.999)
+            const end = getTimestampFromDateKey(endDate) + 86_399_999;
+
+            try {
+                const promises = collectionNames.map(async (collectionName) => {
+                    const q = query(
+                        collection(db, collectionName),
+                        where('timestamp', '>=', start),
+                        where('timestamp', '<=', end)
+                    );
+                    const snapshot = await getDocs(q);
+
+                    return snapshot.docs
+                        .map((item) => {
+                            const value = item.data();
+                            const details = (value.details || {}) as Record<
+                                string,
+                                any
+                            >;
+                            const dateKey = getRecordDateKey(value);
+                            if (!dateKey) return null;
+
+                            let serviceKey =
+                                SERVICE_META[collectionName].serviceKey;
+                            let serviceLabel =
+                                SERVICE_META[collectionName].serviceLabel;
+
+                            // Special handling for shared history collection
+                            if (collectionName === 'history') {
+                                const type = (
+                                    value.type ||
+                                    details.type ||
+                                    ''
+                                ).toLowerCase();
+                                if (type.includes('smkhp')) {
+                                    serviceKey = 'smkhpOffline';
+                                    serviceLabel = 'SMKHP Offline';
+                                } else if (type.includes('customer')) {
+                                    serviceKey = 'customerServiceOffline';
+                                    serviceLabel = 'Customer Service Offline';
+                                } else {
+                                    serviceKey = 'smkhpOffline'; // default
+                                }
+                            }
+
+                            return {
+                                id: item.id,
+                                serviceKey,
+                                serviceLabel,
+                                channel: SERVICE_META[collectionName].channel,
+                                dateKey,
+                                timestamp: getTimestampFromDateKey(dateKey),
+                                title:
+                                    value.title ||
+                                    value.namaSampel ||
+                                    value.formattedNo ||
+                                    value.lpp ||
+                                    item.id,
+                                userName:
+                                    value.userName ||
+                                    value.userNama ||
+                                    value.nama ||
+                                    value.name ||
+                                    value.username ||
+                                    '-',
+                                status: value.status || '-',
+                                totalTarif: Number(value.totalTarif || 0),
+                            } satisfies ReportingRecord;
+                        })
+                        .filter(Boolean) as ReportingRecord[];
+                });
+
+                const results = await Promise.all(promises);
+                if (active) {
+                    const merged = results.flat();
+                    setRecords(merged.sort((a, b) => b.timestamp - a.timestamp));
+                    setIsLoading(false);
+                }
+            } catch (error) {
+                console.error('Error fetching report data:', error);
+                if (active) {
+                    setIsLoading(false);
+                }
+            }
         };
 
-        const unsubscribers = collectionNames.map((collectionName) =>
-            onSnapshot(collection(db, collectionName), (snapshot) => {
-                cache[collectionName] = snapshot.docs
-                    .map((item) => {
-                        const value = item.data();
-                        const details = (value.details || {}) as Record<
-                            string,
-                            any
-                        >;
-                        const dateKey = getRecordDateKey(value);
-                        if (!dateKey) return null;
-
-                        let serviceKey =
-                            SERVICE_META[collectionName].serviceKey;
-                        let serviceLabel =
-                            SERVICE_META[collectionName].serviceLabel;
-
-                        // Special handling for shared history collection
-                        if (collectionName === 'history') {
-                            const type = (
-                                value.type ||
-                                details.type ||
-                                ''
-                            ).toLowerCase();
-                            if (type.includes('smkhp')) {
-                                serviceKey = 'smkhpOffline';
-                                serviceLabel = 'SMKHP Offline';
-                            } else if (type.includes('customer')) {
-                                serviceKey = 'customerServiceOffline';
-                                serviceLabel = 'Customer Service Offline';
-                            } else {
-                                serviceKey = 'smkhpOffline'; // default
-                            }
-                        }
-
-                        return {
-                            id: item.id,
-                            serviceKey,
-                            serviceLabel,
-                            channel: SERVICE_META[collectionName].channel,
-                            dateKey,
-                            timestamp: getTimestampFromDateKey(dateKey),
-                            title:
-                                value.title ||
-                                value.namaSampel ||
-                                value.formattedNo ||
-                                value.lpp ||
-                                item.id,
-                            userName:
-                                value.userName ||
-                                value.userNama ||
-                                value.nama ||
-                                value.name ||
-                                value.username ||
-                                '-',
-                            status: value.status || '-',
-                            totalTarif: Number(value.totalTarif || 0),
-                        } satisfies ReportingRecord;
-                    })
-                    .filter(Boolean) as ReportingRecord[];
-                flush();
-            }),
-        );
+        fetchData();
 
         return () => {
-            unsubscribers.forEach((unsubscribe) => unsubscribe());
+            active = false;
         };
-    }, []);
+    }, [startDate, endDate]);
 
     const filteredRecords = React.useMemo(() => {
         const start = getTimestampFromDateKey(startDate);
@@ -498,7 +521,13 @@ export default function ReportingRouterPage() {
                         </div>
 
                         <div className="rounded-sm border border-slate-200 bg-white p-4 overflow-x-auto">
-                            <Table columns={columns} data={rows} />
+                            {isLoading ? (
+                                <div className="py-8 text-center text-sm text-slate-500 italic">
+                                    Memuat data laporan...
+                                </div>
+                            ) : (
+                                <Table columns={columns} data={rows} />
+                            )}
                         </div>
                     </div>
                 </main>

@@ -6,6 +6,8 @@ import {
     doc,
     getDoc,
     setDoc,
+    query,
+    where,
 } from 'firebase/firestore';
 import { db } from '../../shared/configs/firebase';
 
@@ -49,7 +51,7 @@ type CSAction = {
     updateCustomerServiceHandle: (
         token: string,
         catatan?: string,
-    ) => Promise<boolean>;
+    ) => Promise<{ success: boolean; message?: string } | boolean>;
     updateCustomerServiceStatus: (
         token: string,
         status: string,
@@ -83,8 +85,13 @@ const useCustomerServiceOfflineStore = create<CSState & CSAction>(
         getCustomerService: () => {
             set({ isLoading: true });
 
-            return onSnapshot(
+            const q = query(
                 collection(db, 'CustomerService'),
+                where('subStatus', '!=', 'Selesai'),
+            );
+
+            return onSnapshot(
+                q,
                 (snap) => {
                     const data = snap.docs.map((doc) => ({
                         token: doc.id,
@@ -103,6 +110,10 @@ const useCustomerServiceOfflineStore = create<CSState & CSAction>(
                         subStatus: doc.data().subStatus,
                         queueNo: doc.data().queueNo,
                     }));
+
+                    // Sort in memory by queueNo ascending
+                    data.sort((a, b) => (Number(a.queueNo) || 0) - (Number(b.queueNo) || 0));
+
                     set({ customer_service: data, isLoading: false });
                 },
                 (err) => {

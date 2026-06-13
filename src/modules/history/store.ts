@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../../shared/configs/firebase';
 
 export type UserNoAju = {
@@ -37,10 +37,13 @@ export type UserActivity = {
     description: string;
     dateLabel: string;
     timestamp: number;
+    nik?: string;
+    catatanPetugas?: string;
+    namaPetugas?: string;
+    nipPetugas?: string;
     raw: Record<string, any>;
 };
 
-type LoadedMap = Record<string, boolean>;
 
 type HistoryState = {
     users: HistoryUser[];
@@ -207,6 +210,10 @@ const normalizeHistory = (
             value.createdAt,
             details.appointmentTimeMillis,
         ),
+        nik: value.nik || '',
+        catatanPetugas: value.catatan_petugas || value.catatan || '',
+        namaPetugas: value.nama_petugas || '',
+        nipPetugas: value.nip_petugas || '',
         raw: {
             token: value.token || details.token || id,
             ...value,
@@ -232,56 +239,60 @@ const useHistoryStore = create<HistoryState & HistoryAction>()((set) => ({
             historySMKHPOnline: [],
             historyCSOnline: [],
         };
-        const loaded: LoadedMap = {};
 
-        const flush = () => {
-            const users = (dataStore.users || []) as HistoryUser[];
-            const activities = [
-                ...(dataStore.history || []),
-                ...(dataStore.historyLabUmum || []),
-                ...(dataStore.historyLabOfficial || []),
-                ...(dataStore.historySMKHPOnline || []),
-                ...(dataStore.historyCSOnline || []),
-            ] as UserActivity[];
+        let active = true;
 
-            set({
-                users: users.sort((a, b) => {
-                    return (
-                        getSafeTimestamp(b.updatedAt, b.createdAt) -
-                        getSafeTimestamp(a.updatedAt, a.createdAt)
-                    );
-                }),
-                activities: activities.sort(
-                    (a, b) => b.timestamp - a.timestamp,
-                ),
-                isLoading: COLLECTION_KEYS.some((key) => !loaded[key]),
-            });
+        const fetchData = async () => {
+            try {
+                const promises = COLLECTION_KEYS.map(async (collectionName) => {
+                    const snap = await getDocs(collection(db, collectionName));
+                    if (active) {
+                        dataStore[collectionName] = snap.docs.map((item) => {
+                            const value = item.data();
+                            return collectionName === 'users'
+                                ? normalizeUser(item.id, value)
+                                : normalizeHistory(collectionName, item.id, value);
+                        });
+                    }
+                });
+
+                await Promise.all(promises);
+
+                if (active) {
+                    const users = (dataStore.users || []) as HistoryUser[];
+                    const activities = [
+                        ...(dataStore.history || []),
+                        ...(dataStore.historyLabUmum || []),
+                        ...(dataStore.historyLabOfficial || []),
+                        ...(dataStore.historySMKHPOnline || []),
+                        ...(dataStore.historyCSOnline || []),
+                    ] as UserActivity[];
+
+                    set({
+                        users: users.sort((a, b) => {
+                            return (
+                                getSafeTimestamp(b.updatedAt, b.createdAt) -
+                                getSafeTimestamp(a.updatedAt, a.createdAt)
+                            );
+                        }),
+                        activities: activities.sort(
+                            (a, b) => b.timestamp - a.timestamp,
+                        ),
+                        isLoading: false,
+                    });
+                }
+            } catch (error: any) {
+                console.error('History fetch error', error);
+                if (active) {
+                    set({ error: error.message, isLoading: false });
+                }
+            }
         };
 
-        const unsubscribers = COLLECTION_KEYS.map((collectionName) =>
-            onSnapshot(
-                collection(db, collectionName),
-                (snapshot) => {
-                    dataStore[collectionName] = snapshot.docs.map((item) => {
-                        const value = item.data();
-                        return collectionName === 'users'
-                            ? normalizeUser(item.id, value)
-                            : normalizeHistory(collectionName, item.id, value);
-                    });
-                    loaded[collectionName] = true;
-                    flush();
-                },
-                (error) => {
-                    console.error(`${collectionName} stream error`, error);
-                    loaded[collectionName] = true;
-                    set({ error: error.message });
-                    flush();
-                },
-            ),
-        );
+        fetchData();
 
         return () => {
-            unsubscribers.forEach((unsubscribe) => unsubscribe());
+            active = false;
         };
     },
 

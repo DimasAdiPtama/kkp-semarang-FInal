@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'framer-motion';
-import { IoIosAdd, IoIosRemove, IoIosRefresh, IoIosSave, IoIosSync } from 'react-icons/io';
+import { IoIosAdd, IoIosRemove, IoIosSave, IoIosSync } from 'react-icons/io';
 import { toast } from 'sonner';
 
 import { db } from '../../../shared/configs/firebase';
 import HeaderNavigation from '../../../shared/navigations/header.navigation';
 import FooterNavigation from '../../../shared/navigations/footer.navigation';
 import { Button, TextInput } from '../../../shared/components';
+import KendaliAntreanSkeleton from '../components/skeletons/kendali-antrean.skeleton';
 
 export default function KendaliAntreanPage() {
     const [loading, setLoading] = React.useState(true);
@@ -15,6 +16,39 @@ export default function KendaliAntreanPage() {
     const [onlineValue, setOnlineValue] = React.useState<number | null>(null);
     const [localValue, setLocalValue] = React.useState<number>(20);
     const [autoSync, setAutoSync] = React.useState<boolean>(true);
+
+    const debounceTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isDebouncingRef = React.useRef(false);
+    const autoSyncRef = React.useRef(autoSync);
+    const onlineValueRef = React.useRef<number | null>(null);
+
+    // Keep refs in sync with state to avoid stale closure issues in onSnapshot
+    React.useEffect(() => {
+        autoSyncRef.current = autoSync;
+    }, [autoSync]);
+
+    React.useEffect(() => {
+        onlineValueRef.current = onlineValue;
+    }, [onlineValue]);
+
+    // Clean up timeout on unmount or when autoSync changes
+    React.useEffect(() => {
+        if (!autoSync) {
+            if (debounceTimeoutRef.current) {
+                clearTimeout(debounceTimeoutRef.current);
+                debounceTimeoutRef.current = null;
+            }
+            isDebouncingRef.current = false;
+        }
+    }, [autoSync]);
+
+    React.useEffect(() => {
+        return () => {
+            if (debounceTimeoutRef.current) {
+                clearTimeout(debounceTimeoutRef.current);
+            }
+        };
+    }, []);
 
     React.useEffect(() => {
         const docRef = doc(db, 'metadata', 'queue_settings');
@@ -26,15 +60,33 @@ export default function KendaliAntreanPage() {
                     const data = docSnap.data();
                     const val = typeof data.LayananOffline === 'number' ? data.LayananOffline : 20;
                     setOnlineValue(val);
-                    setLocalValue(val);
+
+                    // Only overwrite localValue if:
+                    // 1. We are in autoSync mode AND there is no pending debounce timeout (user is not dragging/clicking).
+                    // 2. We are in manual mode (autoSync = false) AND the user hasn't made any local modifications (localValue === onlineValue).
+                    if (!isDebouncingRef.current) {
+                        setLocalValue((prevLocal) => {
+                            if (autoSyncRef.current || onlineValueRef.current === null || onlineValueRef.current === prevLocal) {
+                                return val;
+                            }
+                            return prevLocal;
+                        });
+                    }
                 } else {
                     // Document doesn't exist yet, initialize it
                     setOnlineValue(20);
-                    setLocalValue(20);
+                    if (!isDebouncingRef.current) {
+                        setLocalValue((prevLocal) => {
+                            if (autoSyncRef.current || onlineValueRef.current === null || onlineValueRef.current === prevLocal) {
+                                return 20;
+                            }
+                            return prevLocal;
+                        });
+                    }
                 }
                 setLoading(false);
             },
-            (error) => {
+            (_error) => {
                 toast.error('Gagal memuat data antrean dari server');
                 setLoading(false);
             }
@@ -55,7 +107,19 @@ export default function KendaliAntreanPage() {
             toast.error('Gagal memperbarui antrean di server');
         } finally {
             setSaving(false);
+            isDebouncingRef.current = false;
         }
+    };
+
+    const debouncedUpdateFirestore = (val: number) => {
+        isDebouncingRef.current = true;
+        if (debounceTimeoutRef.current) {
+            clearTimeout(debounceTimeoutRef.current);
+        }
+        debounceTimeoutRef.current = setTimeout(() => {
+            updateFirestoreValue(val);
+            debounceTimeoutRef.current = null;
+        }, 800); // 800ms debounce
     };
 
     // 3. Handle Local adjustments
@@ -63,7 +127,7 @@ export default function KendaliAntreanPage() {
         const newVal = Math.max(0, localValue + adjustment);
         setLocalValue(newVal);
         if (autoSync) {
-            updateFirestoreValue(newVal);
+            debouncedUpdateFirestore(newVal);
         }
     };
 
@@ -71,7 +135,7 @@ export default function KendaliAntreanPage() {
         const newVal = Number(e.target.value);
         setLocalValue(newVal);
         if (autoSync) {
-            updateFirestoreValue(newVal);
+            debouncedUpdateFirestore(newVal);
         }
     };
 
@@ -79,34 +143,34 @@ export default function KendaliAntreanPage() {
         const valStr = e.target.value;
         if (valStr === '') {
             setLocalValue(0);
+            if (autoSync) {
+                debouncedUpdateFirestore(0);
+            }
             return;
         }
         const newVal = Math.max(0, parseInt(valStr, 10) || 0);
         setLocalValue(newVal);
         if (autoSync) {
-            updateFirestoreValue(newVal);
+            debouncedUpdateFirestore(newVal);
         }
     };
 
     const handleSaveManual = () => {
+        isDebouncingRef.current = false;
         updateFirestoreValue(localValue);
     };
 
     const handleQuickSet = (val: number) => {
         setLocalValue(val);
         if (autoSync) {
-            updateFirestoreValue(val);
+            debouncedUpdateFirestore(val);
         }
     };
 
     const hasChanges = onlineValue !== localValue;
 
     if (loading) {
-        return (
-            <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center">
-                <p className="text-slate-600 text-sm animate-pulse">Menghubungkan ke database...</p>
-            </div>
-        );
+        return <KendaliAntreanSkeleton />;
     }
 
     return (

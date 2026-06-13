@@ -312,6 +312,10 @@ export default function HistoryTable() {
                                     {selectedUser.npwp}
                                 </p>
                                 <p>
+                                    <span className="font-bold">NIK:</span>{' '}
+                                    {selectedUser.nik || '-'}
+                                </p>
+                                <p>
                                     <span className="font-bold">Email:</span>{' '}
                                     {selectedUser.email}
                                 </p>
@@ -383,6 +387,30 @@ export default function HistoryTable() {
                                             </span>{' '}
                                             {activity.description}
                                         </p>
+                                        {activity.nik && (
+                                            <p className="md:col-span-2">
+                                                <span className="font-bold">
+                                                    NIK:
+                                                </span>{' '}
+                                                {activity.nik}
+                                            </p>
+                                        )}
+                                        {activity.catatanPetugas && (
+                                            <p className="md:col-span-2">
+                                                <span className="font-bold">
+                                                    Catatan Petugas:
+                                                </span>{' '}
+                                                {activity.catatanPetugas}
+                                            </p>
+                                        )}
+                                        {activity.namaPetugas && (
+                                            <p className="md:col-span-2">
+                                                <span className="font-bold">
+                                                    Petugas:
+                                                </span>{' '}
+                                                {activity.namaPetugas} (NIP: {activity.nipPetugas || '-'})
+                                            </p>
+                                        )}
                                     </div>
                                     {isLabActivity(activity) && (
                                         <div className="pt-1">

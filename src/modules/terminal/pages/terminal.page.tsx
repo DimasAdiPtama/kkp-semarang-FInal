@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../../shared/configs/firebase';
 import QueueMonitor, {
     type ServiceType,
@@ -50,14 +50,16 @@ export default function TerminalPage() {
         };
 
         Object.keys(COLLECTIONS_MAP).forEach((collName) => {
+            // Filter out completed queues ('Selesai') directly at database level.
+            // Avoid orderBy at DB level to prevent missing index errors (no composite index required).
             const q = query(
                 collection(db, collName),
-                orderBy('queueNo', 'asc'),
+                where('subStatus', '!=', 'Selesai'),
             );
             const unsub = onSnapshot(
                 q,
                 (snapshot) => {
-                    cache[collName] = snapshot.docs
+                    const items = snapshot.docs
                         .map((doc) => {
                             const data = doc.data();
                             const details = (data.details || {}) as any;
@@ -72,11 +74,14 @@ export default function TerminalPage() {
                                     details.userName ||
                                     'Tanpa Nama',
                                 serviceType: COLLECTIONS_MAP[collName],
-                                status: normalizeStatus(data.status),
+                                status: normalizeStatus(data.subStatus || data.status),
                             } satisfies QueueItem;
-                        })
-                        .filter((item) => item.status !== ('Selesai' as any)); // Only active queues
+                        });
 
+                    // Sort by queueNo ascending in JS memory
+                    items.sort((a, b) => a.queueNo - b.queueNo);
+                    
+                    cache[collName] = items;
                     flush();
                 },
                 (error) => {

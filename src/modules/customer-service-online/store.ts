@@ -6,9 +6,9 @@ import {
     onSnapshot,
     orderBy,
     query,
-    setDoc,
     updateDoc,
     where,
+    writeBatch,
 } from 'firebase/firestore';
 import { db } from '../../shared/configs/firebase';
 
@@ -27,6 +27,7 @@ export type CustomerServiceOnlineData = {
     };
     nomorHp: string;
     npwp: string;
+    nik: string;
     queueNo: number;
     rating: number;
     status: CustomerServiceOnlineStatus;
@@ -142,6 +143,7 @@ const useCustomerServiceOnlineStore = create<
                         },
                         nomorHp: value.nomorHp || value.nomerHp || '-',
                         npwp: value.npwp || '-',
+                        nik: value.nik || value.NIK || '',
                         queueNo: Number(value.queueNo || 0),
                         rating: Number(value.rating || 0),
                         status: normalizeStatus(value.status),
@@ -151,6 +153,7 @@ const useCustomerServiceOnlineStore = create<
                         uuid: value.uuid || value.uid || '',
                         userEmail: value.userEmail || value.email || '',
                         username:
+                            value.userNama ||
                             value.username ||
                             value.nama ||
                             value.name ||
@@ -251,16 +254,14 @@ const useCustomerServiceOnlineStore = create<
 
         try {
             const matchedUser = await findUserByEmail(item.userEmail);
+            const batch = writeBatch(db);
 
-            await updateDoc(doc(db, 'onlineCS', token), {
-                status: 'Selesai',
-                nama_petugas: petugas.nama,
-                nip_petugas: petugas.nip,
-                catatan_petugas: catatan?.trim() || '',
-                updatedAt: Date.now(),
-            });
+            const activeRef = doc(db, 'onlineCS', token);
+            const notesRef = doc(db, 'officer_notes', token);
+            const historyRef = doc(db, 'historyCSOnline', token);
 
-            await setDoc(doc(db, 'officer_notes', token), {
+            // 1. Write to officer_notes
+            batch.set(notesRef, {
                 nama_petugas: petugas.nama,
                 nip_petugas: petugas.nip,
                 catatan: catatan?.trim() || '',
@@ -275,12 +276,13 @@ const useCustomerServiceOnlineStore = create<
                 timestamp: Date.now(),
             });
 
-            await setDoc(doc(db, 'historyCSOnline', token), {
+            // 2. Write to historyCSOnline
+            batch.set(historyRef, {
                 token,
                 formattedNo: item.details.formattedNo || token,
                 email: item.userEmail || '',
                 name: item.username || '',
-                nik: '',
+                nik: matchedUser?.nik || matchedUser?.NIK || item.nik || '',
                 npwp: item.npwp || matchedUser?.npwp || '',
                 nomorHp: item.nomorHp || '',
                 kebutuhan: item.details.kebutuhan || '',
@@ -297,6 +299,12 @@ const useCustomerServiceOnlineStore = create<
                 timestamp: Date.now(),
                 updatedAt: Date.now(),
             });
+
+            // 3. Delete from active queues (onlineCS)
+            batch.delete(activeRef);
+
+            // Commit transaction
+            await batch.commit();
 
             return { success: true };
         } catch (error: any) {

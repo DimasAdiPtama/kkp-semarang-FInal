@@ -6,6 +6,8 @@ import {
     doc,
     getDoc,
     setDoc,
+    query,
+    where,
 } from 'firebase/firestore';
 import { db } from '../../shared/configs/firebase';
 
@@ -74,9 +76,14 @@ const useSMKHPOfflineStore = create<SMKHPOfflineState & SMKHPOfflineAction>(
         // 1. Ambil Antrean SMKHP (Realtime)
         getSMKHP: () => {
             set({ isLoading: true });
+            
+            const q = query(
+                collection(db, 'SMKHP'),
+                where('subStatus', '!=', 'Selesai'),
+            );
 
             return onSnapshot(
-                collection(db, 'SMKHP'),
+                q,
                 (snap) => {
                     const data = snap.docs.map((doc) => ({
                         token: doc.id,
@@ -90,6 +97,10 @@ const useSMKHPOfflineStore = create<SMKHPOfflineState & SMKHPOfflineAction>(
                         subStatus: doc.data().subStatus,
                         queueNo: doc.data().queueNo,
                     }));
+                    
+                    // Sort in memory by queueNo ascending
+                    data.sort((a, b) => (Number(a.queueNo) || 0) - (Number(b.queueNo) || 0));
+                    
                     set({ smkhp: data, isLoading: false });
                 },
                 (err) => {
